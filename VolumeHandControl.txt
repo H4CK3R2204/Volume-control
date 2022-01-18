@@ -1,0 +1,83 @@
+import cv2
+import time
+import numpy as np
+import HandTrackingModule as htm
+import math
+from ctypes import cast, POINTER                              #from pycaw developer
+from comtypes import CLSCTX_ALL                               #from pycaw developer
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume  #install pycaw to access system volume
+
+################################
+wCam, hCam = 640, 480                # or 1280 and 720
+################################
+
+cap=cv2.VideoCapture(0)
+cap.set(3, wCam)                               #setting outputscreen width and height at parameter no 3 and 4
+cap.set(4, hCam)
+pTime = 0
+
+detector = htm.handDetector(detectionCon=0.7) # making of object of our class from the module htm
+                                              # and to not detect the smaller hands image con value is increased
+
+devices = AudioUtilities.GetSpeakers()                                        #from pycaw code
+interface = devices.Activate( IAudioEndpointVolume._iid_, CLSCTX_ALL, None)   #from pycaw code
+volume = cast(interface, POINTER(IAudioEndpointVolume))                       #from pycaw code
+# volume.GetMute()
+# volume.GetMasterVolumeLevel()
+volume.SetMasterVolumeLevel(-20.0, None)  #it will se the minimum value of audio -20 means 26 % of the audio level 0 means 100
+volRange = volume.GetVolumeRange()   #GetVolumeRange has range from -65(min) to 0(max) [-0.65,0.0]
+minVol = volRange[0]                 #storing 0.65
+maxVol = volRange[1]                 #storing 0
+vol = 0
+volBar = 400                          #rectangle  first filled value should be at zero i.e 400
+volPer = 0
+
+
+while True:
+    success, img = cap.read()
+    img = detector.findHands(img)                # to get hand connections of the image we are capturing and returing the result
+    lmList = detector.findPosition(img, draw=False)  #draw is for highliting a particular landmark thats why here is false
+                                                     #lmlist will store 2 axis values of all id no of single hand
+    if len(lmList) != 0:
+      # print(lmList[4],lmList[8])
+      x1, y1 = lmList[4][1], lmList[4][2]        # getting x and y value of thumb tip
+      x2, y2 = lmList[8][1], lmList[8][2]        #getting x and y values of index finger tip of same hands
+      cx, cy = (x1 + x2) // 2, (y1 + y2) // 2    # to get the center of the line
+
+      cv2.circle(img, (x1, y1), 15, (0, 0, 0), cv2.FILLED) # to highlight thumb tip
+      cv2.circle(img, (x2, y2), 15, (0, 0, 0), cv2.FILLED) # to highlight index finger tip
+      cv2.line(img, (x1, y1), (x2, y2), (0, 0, 255), 3)    # to draw a line between two tips
+      cv2.circle(img, (cx, cy), 15, (255, 255, 255), cv2.FILLED) # to highlight the center of the line
+
+      length = math.hypot(x2 - x1, y2 - y1)           # to get the length of the line to set audio accordingly max(320)
+
+      # our hand length range was from 300 to 50
+      #and vol range was from -65 to 0
+      #so we havw to convert our hand range into range of vol. sp we use numpy for that
+
+      vol = np.interp(length, [50, 300], [minVol, maxVol])  #converting length range to vol range
+
+      #print(int(length),vol)  it will give 300,0 and 50,-65
+
+      volBar = np.interp(length, [50, 300],[400, 150])    #converting the length according to rectangle length
+      volPer = np.interp(length, [50, 300], [0, 100])     #converting the length according to % value
+      # print(int(length), vol)
+      volume.SetMasterVolumeLevel(vol, None)        #setting the volume according the vol value from our hand distance
+
+      if length < 25:                               # if lenth is less center of line changes colour like a press of a button
+          cv2.circle(img, (cx, cy), 15, (0, 255, 255), cv2.FILLED)
+
+    cv2.rectangle(img, (50, 150), (85, 400), (0, 0, 255), 1)         #making a rectangle with intial and final coordinates
+    cv2.rectangle(img, (50, int(volBar)), (85, 400), (0, 0, 139), cv2.FILLED) #filling the rectangle according to the value of vol
+    cv2.putText(img, f'{int(volPer)} %', (40, 450), cv2.FONT_HERSHEY_COMPLEX,  #putting value of audio percentage
+                1, (0, 0, 255), 1)
+
+
+    cTime = time.time()
+    fps = 1 / (cTime - pTime)
+    pTime = cTime
+    cv2.putText(img, f'FPS: {int(fps)}', (40, 50), cv2.FONT_HERSHEY_COMPLEX,
+                1, (0, 0, 255), 1)
+
+    cv2.imshow("Img",img)
+    cv2.waitKey(1)
